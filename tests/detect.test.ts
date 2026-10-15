@@ -77,3 +77,21 @@ test('simpleCommands tracks cd', () => {
   const cmds = simpleCommands('cd apps/web && npm install zod; echo done')
   assert.deepEqual(cmds.map(c => [c.argv[0], c.cd]), [['npm', ['apps/web']], ['echo', ['apps/web']]])
 })
+
+test('options before or around the subcommand are translated, not mistaken for packages', () => {
+  const pm = (manager: 'npm' | 'pnpm' | 'yarn' | 'bun'): ProjectManagers => ({ js: { manager, evidence: 'e', dir: '/' } })
+  const s = (cmd: string, to: 'npm' | 'pnpm' | 'yarn' | 'bun'): string | undefined => checkArgv(cmd.split(' '), pm(to), cmd)?.suggestion
+  assert.equal(s('npm install --prefix packages/web', 'pnpm'), 'pnpm -C packages/web install')
+  assert.equal(s('npm i -w web react', 'pnpm'), 'pnpm --filter web add react')
+  assert.equal(s('npm i -w web react', 'yarn'), 'yarn workspace web add react')
+  assert.equal(s('pnpm --filter web add react', 'npm'), 'npm -w web install react')
+  assert.equal(s('yarn --cwd app add x', 'npm'), 'npm --prefix app install x')
+  assert.equal(s('yarn --frozen-lockfile', 'pnpm'), 'pnpm install')
+  assert.equal(s('npm --version', 'pnpm'), undefined)
+})
+
+test('pip installs of tooling or into the user site are left alone', () => {
+  const pm: ProjectManagers = { py: { manager: 'uv', evidence: 'e', dir: '/' } }
+  for (const cmd of ['pip install --upgrade pip', 'pip3 install -U uv', 'pip install --user pipx']) assert.equal(checkArgv(cmd.split(' '), pm, cmd), undefined, cmd)
+  assert.equal(checkArgv('pip install httpx'.split(' '), pm, 'pip install httpx')?.suggestion, 'uv add httpx')
+})

@@ -45,7 +45,9 @@ For Python it looks for `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile`, or a `[
 
 The same goes for yarn, bun and npm projects, and for poetry (`poetry add`), pipenv (`pipenv install`) and pdm (`pdm add`).
 
-It only cares about commands that change dependencies. `npm run build`, `npm test`, `npx vitest` and global installs (`npm i -g ...`) pass, because they don't touch the project's lockfile.
+Folder and workspace options carry over too. `npm i -w web react` becomes `pnpm --filter web add react` (or `yarn workspace web add react`), and `npm install --prefix api` becomes `pnpm -C api install`.
+
+It only cares about commands that change the project's dependencies. `npm run build`, `npm test`, `npx vitest` and global installs (`npm i -g ...`) pass, because they don't touch the project's lockfile. On the Python side, `pip install --user ...` and upgrading the installers themselves (`pip install -U pip`, `pip install uv`) are left alone for the same reason.
 
 ## Settings
 

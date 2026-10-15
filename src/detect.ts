@@ -114,6 +114,18 @@ interface JsIntent {
   exact: boolean
   optional: boolean
   peer: boolean
+  /** Folder the command targets (`--prefix`, `-C`, `--cwd`, `--dir`). */
+  dir?: string
+  /** npm/yarn workspace or pnpm filter the command targets. */
+  workspace?: string
+}
+
+/** Flags that take a value, per source manager; the value must not be read as a package. */
+const JS_VALUE_FLAGS: Record<JsManager, Record<string, 'dir' | 'workspace' | 'skip'>> = {
+  npm: { '--prefix': 'dir', '-C': 'dir', '-w': 'workspace', '--workspace': 'workspace', '--registry': 'skip', '--cache': 'skip', '--tag': 'skip', '--userconfig': 'skip', '--omit': 'skip', '--include': 'skip' },
+  pnpm: { '-C': 'dir', '--dir': 'dir', '--filter': 'workspace', '-F': 'workspace', '--registry': 'skip', '--store-dir': 'skip' },
+  yarn: { '--cwd': 'dir', '--registry': 'skip', '--mode': 'skip' },
+  bun: { '--cwd': 'dir', '--registry': 'skip', '--backend': 'skip' },
 }
 
 const JS_ACTIONS: Record<JsManager, Record<string, JsIntent['action']>> = {
@@ -123,14 +135,40 @@ const JS_ACTIONS: Record<JsManager, Record<string, JsIntent['action']>> = {
   bun: { install: 'add', i: 'add', add: 'add', a: 'add', remove: 'remove', rm: 'remove', update: 'update' },
 }
 
-function parseJs(manager: JsManager, args: string[]): JsIntent | undefined {
+function parseJs(manager: JsManager, argv: string[]): JsIntent | undefined {
+  // `pnpm --filter web add x`, `yarn --cwd app add x`: move options that precede the subcommand after it.
+  const leading: string[] = []
+  let at = 0
+  while (at < argv.length && argv[at]!.startsWith('-')) {
+    const a = argv[at]!
+    leading.push(a)
+    at += 1
+    if (JS_VALUE_FLAGS[manager][a] !== undefined && at < argv.length) leading.push(argv[at++]!)
+  }
+  const args = [...argv.slice(at, at + 1), ...leading, ...argv.slice(at + 1)]
   const sub = args[0]
-  if (sub === undefined) return manager === 'yarn' ? { action: 'install-all', packages: [], dev: false, global: false, exact: false, optional: false, peer: false } : undefined
+  const yarnInstall = manager === 'yarn' && sub !== undefined && args.every(x => ['--frozen-lockfile', '--immutable', '--pure-lockfile', '--prefer-offline', '--check-files'].includes(x))
+  if (sub === undefined || yarnInstall) return manager === 'yarn' ? { action: 'install-all', packages: [], dev: false, global: false, exact: false, optional: false, peer: false } : undefined
   const action = JS_ACTIONS[manager][sub]
   if (action === undefined) return undefined
   const rest = args.slice(1)
   const flag = (...names: string[]): boolean => rest.some(a => names.includes(a))
-  const packages = rest.filter(a => !a.startsWith('-'))
+  const packages: string[] = []
+  let dir: string | undefined
+  let workspace: string | undefined
+  const valueFlags = JS_VALUE_FLAGS[manager]
+  for (let k = 0; k < rest.length; k += 1) {
+    const a = rest[k]!
+    const [name, inline] = a.startsWith('--') && a.includes('=') ? [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)] : [a, undefined]
+    const kind = valueFlags[name]
+    if (kind !== undefined) {
+      const value = inline ?? rest[(k += 1)]
+      if (kind === 'dir') dir = value
+      if (kind === 'workspace') workspace = value
+      continue
+    }
+    if (!a.startsWith('-')) packages.push(a)
+  }
   const global = flag('-g', '--global', 'global')
   const intent: JsIntent = {
     action: action === 'add' && packages.length === 0 ? 'install-all' : action,
@@ -140,6 +178,8 @@ function parseJs(manager: JsManager, args: string[]): JsIntent | undefined {
     exact: flag('-E', '--save-exact', '--exact'),
     optional: flag('-O', '--save-optional', '--optional'),
     peer: flag('--save-peer', '--peer', '-P'),
+    ...(dir === undefined ? {} : { dir }),
+    ...(workspace === undefined ? {} : { workspace }),
   }
   return intent
 }
@@ -147,14 +187,19 @@ function parseJs(manager: JsManager, args: string[]): JsIntent | undefined {
 function renderJs(target: JsManager, i: JsIntent): string {
   const flags = [i.dev ? '-D' : '', i.exact ? (target === 'yarn' ? '--exact' : '-E') : '', i.optional ? (target === 'npm' ? '-O' : '--optional') : '', i.peer ? (target === 'npm' ? '--save-peer' : '--peer') : ''].filter(Boolean)
   const pkgs = i.packages.join(' ')
-  const join = (...parts: string[]): string => parts.filter(Boolean).join(' ')
+  const where = i.dir !== undefined
+    ? { npm: `--prefix ${i.dir}`, pnpm: `-C ${i.dir}`, yarn: `--cwd ${i.dir}`, bun: `--cwd ${i.dir}` }[target]
+    : i.workspace !== undefined
+      ? { npm: `-w ${i.workspace}`, pnpm: `--filter ${i.workspace}`, yarn: `workspace ${i.workspace}`, bun: `--filter ${i.workspace}` }[target]
+      : ''
+  const join = (...parts: string[]): string => parts.filter(Boolean).join(' ').replace(/^(npm|pnpm|yarn|bun) /, where === '' ? '$1 ' : `$1 ${where} `)
   switch (i.action) {
-    case 'install-all': return target === 'yarn' ? 'yarn install' : `${target} install`
-    case 'ci': return { npm: 'npm ci', pnpm: 'pnpm install --frozen-lockfile', yarn: 'yarn install --frozen-lockfile  # Yarn Berry: yarn install --immutable', bun: 'bun install --frozen-lockfile' }[target]
+    case 'install-all': return join(`${target} install`)
+    case 'ci': return join({ npm: 'npm ci', pnpm: 'pnpm install --frozen-lockfile', yarn: 'yarn install --frozen-lockfile  # Yarn Berry: yarn install --immutable', bun: 'bun install --frozen-lockfile' }[target])
     case 'add': return join(target === 'npm' ? 'npm install' : `${target} add`, ...flags, pkgs)
     case 'remove': return join(target === 'npm' ? 'npm uninstall' : `${target} remove`, pkgs)
     case 'update': return join(target === 'yarn' ? 'yarn upgrade' : `${target} update`, pkgs)
-    default: return `${target} install`
+    default: return join(`${target} install`)
   }
 }
 
@@ -171,6 +216,8 @@ function parsePip(args: string[]): PyIntent | undefined {
   const rest = args.slice(1)
   if (sub === 'uninstall') return { action: 'remove', packages: rest.filter(a => !a.startsWith('-')), upgrade: false }
   if (sub !== 'install') return undefined
+  // Installing into the user site, or upgrading the installers themselves, is not a project dependency.
+  if (rest.includes('--user')) return undefined
   const r = rest.findIndex(a => a === '-r' || a === '--requirement')
   if (r !== -1) return { action: 'requirements', packages: [], requirements: rest[r + 1] ?? 'requirements.txt', upgrade: false }
   if (rest.includes('-e') || rest.includes('--editable')) return { action: 'editable', packages: [], upgrade: false }
@@ -182,6 +229,7 @@ function parsePip(args: string[]): PyIntent | undefined {
     if (!a.startsWith('-')) packages.push(a)
   }
   if (packages.length === 0) return undefined
+  if (packages.every(p => /^(?:pip|setuptools|wheel|uv|pipx|virtualenv|poetry|pdm|pipenv)(?:[<>=!~].*)?$/i.test(p))) return undefined
   if (packages.some(p => p === '.' || p.startsWith('./') || p.startsWith('/'))) return { action: 'editable', packages: [], upgrade: false }
   return { action: 'add', packages, upgrade: rest.includes('-U') || rest.includes('--upgrade') }
 }
