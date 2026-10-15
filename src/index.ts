@@ -36,7 +36,7 @@ export const Config: Schema<Config> = Schema.object({
   mode: Schema.union(['deny', 'ask']).default('deny'),
   javascript: Schema.boolean().default(true),
   python: Schema.boolean().default(true),
-  shellTools: Schema.array(Schema.string()).default(['bash']),
+  shellTools: Schema.array(Schema.string()).default(['bash', 'pwsh']),
 }) as Schema<Config>
 
 const WHY: Record<Mismatch['ecosystem'], string> = {
@@ -64,7 +64,7 @@ export function apply(ctx: Context, config: Config): void {
     const workspace = exec.agent?.session.header.cwd ?? process.cwd()
     const base = typeof args.workdir === 'string' ? (isAbsolute(args.workdir) ? args.workdir : resolve(workspace, args.workdir)) : workspace
     for (const simple of simpleCommands(args.command)) {
-      const dir = simple.cd.reduce((d, c) => resolve(d, c), base)
+      const dir = simple.cd.reduce((d, c) => resolve(d, c.replaceAll('\\', '/')), base)
       const managers: ProjectManagers = {
         ...(config.javascript ? { js: detectJs(dir, '/') } : {}),
         ...(config.python ? { py: detectPy(dir, '/') } : {}),

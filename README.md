@@ -17,10 +17,10 @@ The model usually just runs the suggested line next.
 ## Install
 
 ```sh
-dsh plugin --profile tui add dsh-enforce-package-manager
+dsh plugin --profile web add dsh-enforce-package-manager
 ```
 
-Use your own profile instead of `tui`. Nothing else to set up. Remove it with `dsh plugin --profile tui remove dsh-enforce-package-manager`.
+That's the `web` profile, the browser UI you start with `dsh web`. If you run DSH another way, use `headless` (scripts and CI) or `acp` (editor integrations) instead. Each profile keeps its own plugin list, so add it to every profile you use. Nothing else to set up. Remove it with `dsh plugin --profile web remove dsh-enforce-package-manager`.
 
 ### From a clone
 
@@ -31,7 +31,7 @@ git clone https://github.com/acus9345/dsh-enforce-package-manager
 cd dsh-enforce-package-manager
 npm install
 npm pack
-dsh plugin --profile tui add ./dsh-enforce-package-manager-0.1.0.tgz
+dsh plugin --profile web add ./dsh-enforce-package-manager-0.1.0.tgz
 ```
 
 ## How it detects the project's manager
@@ -59,6 +59,8 @@ The same goes for yarn, bun and npm projects, and for poetry (`poetry add`), pip
 
 Folder and workspace options carry over too. `npm i -w web react` becomes `pnpm --filter web add react` (or `yarn workspace web add react`), and `npm install --prefix api` becomes `pnpm -C api install`.
 
+On Windows, where DSH runs commands through PowerShell, the same checks apply to `npm.cmd`, `pip.exe`, full program paths and `Set-Location`.
+
 It only cares about commands that change the project's dependencies. `npm run build`, `npm test`, `npx vitest` and global installs (`npm i -g ...`) pass, because they don't touch the project's lockfile. On the Python side, `pip install --user ...` and upgrading the installers themselves (`pip install -U pip`, `pip install uv`) are left alone for the same reason.
 
 ## Settings
@@ -71,7 +73,7 @@ Add a row like this to `~/.dsh/profiles/<profile>/cordis.patch.yml`, or to `~/.d
     mode: deny          # or `ask` to approve mismatches yourself
     javascript: true    # false: don't police npm/pnpm/yarn/bun
     python: true        # false: don't police pip
-    shellTools: [bash]
+    shellTools: [bash, pwsh]   # pwsh is the shell DSH uses on Windows
 ```
 
 ## Development

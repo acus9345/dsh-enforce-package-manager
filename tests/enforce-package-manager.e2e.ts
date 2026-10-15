@@ -38,3 +38,14 @@ test('works when installed with `dsh plugin add`', async () => {
   assert.equal(run.exitCode, 0, run.stderr)
   assert.match(run.toolResults[0]!.result, /yarn add lodash/)
 })
+
+test('guards the pwsh tool too (the shell DSH uses on Windows)', async () => {
+  const run = await runDsh({
+    plugins: [plugin],
+    homePatch: '- id: tool-pwsh\n  disabled: false\n- id: tool-bash\n  disabled: true\n',
+    files: { 'package.json': '{"name":"x","packageManager":"pnpm@9.12.0"}', '.git/HEAD': 'x' },
+    script: [{ tool: 'pwsh', input: { description: 'Add dep', command: 'npm.cmd install zod' } }],
+  })
+  assert.equal(run.exitCode, 0, run.stderr)
+  assert.match(run.toolResults[0]!.result, /pnpm add zod/)
+})

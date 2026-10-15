@@ -254,7 +254,8 @@ const JS_MANAGERS = new Set<string>(['npm', 'pnpm', 'yarn', 'bun'])
  * @returns the mismatch, or undefined when the command is fine.
  */
 export function checkArgv(argv: string[], managers: ProjectManagers, text: string): Mismatch | undefined {
-  const prog = (argv[0] ?? '').split('/').at(-1)!
+  // `C:\\Program Files\\nodejs\\npm.cmd` and `pip.exe` are npm and pip.
+  const prog = (argv[0] ?? '').split(/[/\\]/).at(-1)!.toLowerCase().replace(/\.(?:exe|cmd|bat|ps1)$/, '')
   if (managers.js !== undefined && JS_MANAGERS.has(prog) && prog !== managers.js.manager) {
     const intent = parseJs(prog as JsManager, argv.slice(1))
     if (intent !== undefined && !intent.global) {
@@ -284,9 +285,10 @@ export function simpleCommands(command: string): Array<{ argv: string[]; text: s
   for (const part of command.split(/&&|\|\||;|\n|\|/)) {
     const words = (part.match(/'[^']*'|"(?:[^"\\]|\\.)*"|\S+/g) ?? []).map(w => w.replace(/^'(.*)'$/s, '$1').replace(/^"(.*)"$/s, '$1'))
     while (words.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!)) words.shift()
-    if (words[0] === 'sudo' || words[0] === 'command' || words[0] === 'exec') words.shift()
+    if (words[0] === 'sudo' || words[0] === 'command' || words[0] === 'exec' || words[0] === '&') words.shift()
     if (words.length === 0) continue
-    if (words[0] === 'cd' && words[1] !== undefined) {
+    // PowerShell's Set-Location / sl / pushd move the same way `cd` does.
+    if (/^(?:cd|set-location|sl|chdir|pushd)$/i.test(words[0]!) && words[1] !== undefined) {
       cd.push(words[1])
       continue
     }

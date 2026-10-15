@@ -95,3 +95,13 @@ test('pip installs of tooling or into the user site are left alone', () => {
   for (const cmd of ['pip install --upgrade pip', 'pip3 install -U uv', 'pip install --user pipx']) assert.equal(checkArgv(cmd.split(' '), pm, cmd), undefined, cmd)
   assert.equal(checkArgv('pip install httpx'.split(' '), pm, 'pip install httpx')?.suggestion, 'uv add httpx')
 })
+
+test('PowerShell spellings: npm.cmd, full paths, & and Set-Location', () => {
+  const pm: ProjectManagers = { js: { manager: 'pnpm', evidence: 'e', dir: '/' }, py: { manager: 'uv', evidence: 'e', dir: '/' } }
+  const s = (cmd: string): Array<string | undefined> => simpleCommands(cmd).map(c => checkArgv(c.argv, pm, c.text)?.suggestion)
+  assert.deepEqual(s('npm.cmd install zod'), ['pnpm add zod'])
+  assert.deepEqual(s('& "C:\\Program Files\\nodejs\\npm.cmd" i -D vitest'), ['pnpm add -D vitest'])
+  assert.deepEqual(s('C:\\Python312\\Scripts\\pip.exe install httpx'), ['uv add httpx'])
+  const moved = simpleCommands('Set-Location web; npm i react')
+  assert.deepEqual(moved.map(c => c.cd), [['web']])
+})
