@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { checkArgv, detectJs, detectPy, simpleCommands, type ProjectManagers } from '../src/detect.ts'
+import { checkArgv, detectJs, detectPy, searchRoot, simpleCommands, type ProjectManagers } from '../src/detect.ts'
 
 const project = (files: Record<string, string>): string => {
   const dir = mkdtempSync(join(tmpdir(), 'pm-'))
@@ -14,26 +14,47 @@ const project = (files: Record<string, string>): string => {
   return dir
 }
 
+// Each temp project is its own root, so nothing above it (a stray lockfile in
+// the home folder, say) can leak into the result.
+const detectJsHere = (files: Record<string, string>) => { const d = project(files); return detectJs(d, d) }
+const detectPyHere = (files: Record<string, string>) => { const d = project(files); return detectPy(d, d) }
+
 test('JS detection: packageManager field beats lockfiles', () => {
   const d = project({ 'package.json': '{"packageManager":"pnpm@9.12.0"}', 'package-lock.json': '{}' })
   assert.equal(detectJs(d, d)?.manager, 'pnpm')
 })
 
 test('JS detection: lockfiles, workspace file, nested packages, ambiguity', () => {
-  assert.equal(detectJs(project({ 'yarn.lock': '' }), '/')?.manager, 'yarn')
-  assert.equal(detectJs(project({ 'bun.lock': '' }), '/')?.manager, 'bun')
+  assert.equal(detectJsHere({ 'yarn.lock': '' })?.manager, 'yarn')
+  assert.equal(detectJsHere({ 'bun.lock': '' })?.manager, 'bun')
   const mono = project({ 'pnpm-workspace.yaml': 'packages: [apps/*]', 'apps/web/package.json': '{}' })
   assert.equal(detectJs(join(mono, 'apps/web'), mono)?.manager, 'pnpm')
-  assert.equal(detectJs(project({ 'yarn.lock': '', 'package-lock.json': '{}' }), '/'), undefined)
-  assert.equal(detectJs(project({ 'package.json': '{}' }), '/'), undefined)
+  assert.equal(detectJsHere({ 'yarn.lock': '', 'package-lock.json': '{}' }), undefined)
+  assert.equal(detectJsHere({ 'package.json': '{}' }), undefined)
+})
+
+test('the search stops at the workspace or git root, not at a parent lockfile', () => {
+  const home = project({ 'package-lock.json': '{}', 'app/package.json': '{}', 'repo/.git/HEAD': '', 'repo/pkg/package.json': '{}' })
+  const app = join(home, 'app')
+  assert.equal(searchRoot(app, app), app)
+  assert.equal(detectJs(app, searchRoot(app, app)), undefined)
+  const pkg = join(home, 'repo', 'pkg')
+  assert.equal(searchRoot(pkg, pkg), join(home, 'repo'))
+  assert.equal(detectJs(pkg, searchRoot(pkg, pkg)), undefined)
+  // A monorepo package opened on its own still finds the workspace above it.
+  const mono = project({ '.git/HEAD': '', 'pnpm-workspace.yaml': 'packages: [apps/*]', 'apps/web/package.json': '{}' })
+  const web = join(mono, 'apps', 'web')
+  assert.equal(detectJs(web, searchRoot(web, web))?.manager, 'pnpm')
+  // A `cd` outside the workspace stops at the target directory.
+  assert.equal(searchRoot(app, join(home, 'elsewhere')), app)
 })
 
 test('Python detection', () => {
-  assert.equal(detectPy(project({ 'uv.lock': '' }), '/')?.manager, 'uv')
-  assert.equal(detectPy(project({ 'poetry.lock': '' }), '/')?.manager, 'poetry')
-  assert.equal(detectPy(project({ 'pyproject.toml': '[tool.poetry]\nname="x"' }), '/')?.manager, 'poetry')
-  assert.equal(detectPy(project({ 'Pipfile': '' }), '/')?.manager, 'pipenv')
-  assert.equal(detectPy(project({ 'pyproject.toml': '[project]\nname="x"' }), '/'), undefined)
+  assert.equal(detectPyHere({ 'uv.lock': '' })?.manager, 'uv')
+  assert.equal(detectPyHere({ 'poetry.lock': '' })?.manager, 'poetry')
+  assert.equal(detectPyHere({ 'pyproject.toml': '[tool.poetry]\nname="x"' })?.manager, 'poetry')
+  assert.equal(detectPyHere({ 'Pipfile': '' })?.manager, 'pipenv')
+  assert.equal(detectPyHere({ 'pyproject.toml': '[project]\nname="x"' }), undefined)
 })
 
 const js = (manager: 'npm' | 'pnpm' | 'yarn' | 'bun'): ProjectManagers => ({ js: { manager, evidence: 'x', dir: '/' } })

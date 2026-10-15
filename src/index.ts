@@ -15,9 +15,9 @@ import { isAbsolute, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
-import { checkArgv, detectJs, detectPy, simpleCommands, type Mismatch, type ProjectManagers } from './detect.ts'
+import { checkArgv, detectJs, detectPy, searchRoot, simpleCommands, type Mismatch, type ProjectManagers } from './detect.ts'
 
-export { checkArgv, detectJs, detectPy, simpleCommands } from './detect.ts'
+export { checkArgv, detectJs, detectPy, searchRoot, simpleCommands } from './detect.ts'
 export type { Mismatch, ProjectManagers, JsManager, PyManager } from './detect.ts'
 
 export const name = 'enforce-package-manager'
@@ -65,9 +65,10 @@ export function apply(ctx: Context, config: Config): void {
     const base = typeof args.workdir === 'string' ? (isAbsolute(args.workdir) ? args.workdir : resolve(workspace, args.workdir)) : workspace
     for (const simple of simpleCommands(args.command)) {
       const dir = simple.cd.reduce((d, c) => resolve(d, c.replaceAll('\\', '/')), base)
+      const root = searchRoot(dir, workspace)
       const managers: ProjectManagers = {
-        ...(config.javascript ? { js: detectJs(dir, '/') } : {}),
-        ...(config.python ? { py: detectPy(dir, '/') } : {}),
+        ...(config.javascript ? { js: detectJs(dir, root) } : {}),
+        ...(config.python ? { py: detectPy(dir, root) } : {}),
       }
       const mismatch = checkArgv(simple.argv, managers, simple.text)
       if (mismatch === undefined) continue

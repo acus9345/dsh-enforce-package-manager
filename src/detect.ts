@@ -7,7 +7,7 @@
  * translates them to the project's manager.
  */
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 export type JsManager = 'npm' | 'pnpm' | 'yarn' | 'bun'
 export type PyManager = 'uv' | 'poetry' | 'pipenv' | 'pdm' | 'pip'
@@ -80,6 +80,28 @@ export function detectPy(dir: string, stopAt: string): ProjectManagers['py'] {
     }
   }
   return undefined
+}
+
+/**
+ * Where the upward search for `dir` should stop: the git root above it if there
+ * is one, otherwise the session workspace (when `dir` is inside it), otherwise
+ * `dir` itself. This keeps a stray lockfile in a home folder or drive root from
+ * deciding the manager for a project that has none.
+ * @param dir - directory the command runs in.
+ * @param workspace - the session's workspace directory.
+ * @returns the directory to pass as `stopAt`.
+ */
+export function searchRoot(dir: string, workspace: string): string {
+  const start = resolve(dir)
+  for (let d = start, i = 0; i < 40; i += 1) {
+    if (existsSync(join(d, '.git'))) return d
+    const parent = dirname(d)
+    if (parent === d) break
+    d = parent
+  }
+  const ws = resolve(workspace)
+  const rel = relative(ws, start)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel)) ? ws : start
 }
 
 function* ancestors(dir: string, stopAt: string): Generator<string> {

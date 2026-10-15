@@ -36,7 +36,7 @@ dsh plugin --profile web add ./dsh-enforce-package-manager-0.1.0.tgz
 
 ## How it detects the project's manager
 
-It starts in the directory the command will run in, following any `cd` earlier in the same command line. From there it walks up toward the repo root and stops at the first directory that answers the question.
+It starts in the directory the command will run in, following any `cd` earlier in the same command line. From there it walks up and stops at the first directory that answers the question. It never goes above the git root, or above the folder you started DSH in when there's no git repo, so a stray lockfile in your home folder doesn't count.
 
 For JavaScript, a `packageManager` field in `package.json` wins. After that it looks for a single lockfile: `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` / `bun.lockb` or `package-lock.json`. If it finds lockfiles from two different managers, it doesn't guess and stays out of the way.
 
