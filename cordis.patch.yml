@@ -1,0 +1,11 @@
+# dsh-enforce-package-manager: use the package manager the project already uses.
+# Override by restating this row's whole `config` in a later layer:
+#
+# - id: enforce-package-manager
+#   config:
+#     mode: deny        # or ask
+#     javascript: true
+#     python: true
+- insert:
+    - id: enforce-package-manager
+      name: dsh-enforce-package-manager
