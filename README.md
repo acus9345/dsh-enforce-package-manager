@@ -22,6 +22,18 @@ dsh plugin --profile tui add dsh-enforce-package-manager
 
 Use your own profile instead of `tui`. Nothing else to set up. Remove it with `dsh plugin --profile tui remove dsh-enforce-package-manager`.
 
+### From a clone
+
+Before the package is on npm, or to try local changes, build a tarball and install that:
+
+```sh
+git clone https://github.com/acus9345/dsh-enforce-package-manager
+cd dsh-enforce-package-manager
+npm install
+npm pack
+dsh plugin --profile tui add ./dsh-enforce-package-manager-0.1.0.tgz
+```
+
 ## How it detects the project's manager
 
 It starts in the directory the command will run in, following any `cd` earlier in the same command line. From there it walks up toward the repo root and stops at the first directory that answers the question.
@@ -72,4 +84,4 @@ npm run test:e2e   # real dsh runs against a scripted local model, no API key ne
 
 The install test runs `dsh plugin add`, which needs `pnpm` on your PATH.
 
-MIT licensed.
+MIT licensed. Written by [acus9345](https://github.com/acus9345). Bug reports and ideas are welcome in the issues.
