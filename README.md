@@ -1,5 +1,7 @@
 # dsh-enforce-package-manager
 
+English | [中文](README.zh.md)
+
 Your repo uses pnpm, and the agent types `npm install zod`. Now you've got a `package-lock.json` sitting next to `pnpm-lock.yaml`, and a dependency that pnpm doesn't know about. On the Python side it's `pip install requests` in a uv project. The package lands in the venv, never reaches `pyproject.toml`, and vanishes on the next `uv sync`.
 
 This [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin works out which package manager the project uses. If the agent reaches for a different one, the command is stopped and the model gets the right command, already translated:
@@ -24,14 +26,14 @@ That's the `web` profile, the browser UI you start with `dsh web`. If you run DS
 
 ### From a clone
 
-Before the package is on npm, or to try local changes, build a tarball and install that:
+To try local changes, build a tarball and install that:
 
 ```sh
 git clone https://github.com/acus9345/dsh-enforce-package-manager
 cd dsh-enforce-package-manager
 npm install
 npm pack
-dsh plugin --profile web add ./dsh-enforce-package-manager-0.1.0.tgz
+dsh plugin --profile web add ./dsh-enforce-package-manager-0.2.0.tgz
 ```
 
 ## How it detects the project's manager
