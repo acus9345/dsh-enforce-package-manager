@@ -1,6 +1,6 @@
 # dsh-enforce-package-manager
 
-English | [中文](README.zh.md)
+English | [中文](README_zh.md)
 
 Your repo uses pnpm, and the agent types `npm install zod`. Now you've got a `package-lock.json` sitting next to `pnpm-lock.yaml`, and a dependency that pnpm doesn't know about. On the Python side it's `pip install requests` in a uv project. The package lands in the venv, never reaches `pyproject.toml`, and vanishes on the next `uv sync`.
 

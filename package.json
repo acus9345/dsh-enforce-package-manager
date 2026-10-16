@@ -1,6 +1,6 @@
 {
   "name": "dsh-enforce-package-manager",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "DeepSeek Harness plugin that catches the wrong package manager for the repo (npm install in a pnpm repo, pip install in a uv/poetry project, and so on) and gives the model the exact right command.",
   "license": "MIT",
   "author": "acus9345",
