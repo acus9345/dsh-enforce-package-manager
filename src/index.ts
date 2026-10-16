@@ -16,6 +16,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
 import { checkArgv, detectJs, detectPy, searchRoot, simpleCommands, type Mismatch, type ProjectManagers } from './detect.ts'
+import { resolveConfig } from './shared/live.ts'
 
 export { checkArgv, detectJs, detectPy, searchRoot, simpleCommands } from './detect.ts'
 export type { Mismatch, ProjectManagers, JsManager, PyManager } from './detect.ts'
@@ -32,12 +33,14 @@ export interface Config {
   shellTools: string[]
 }
 
+// Every field is `.volatile()` so the settings page on DSH's Plugins page can
+// change it live; `apply` reads the current values on each call.
 export const Config: Schema<Config> = Schema.object({
-  mode: Schema.union(['deny', 'ask']).default('deny'),
-  javascript: Schema.boolean().default(true),
-  python: Schema.boolean().default(true),
-  shellTools: Schema.array(Schema.string()).default(['bash', 'pwsh']),
-}) as Schema<Config>
+  mode: Schema.union(['deny', 'ask']).default('deny').volatile(),
+  javascript: Schema.boolean().default(true).volatile(),
+  python: Schema.boolean().default(true).volatile(),
+  shellTools: Schema.array(Schema.string()).default(['bash', 'pwsh']).volatile(),
+}) as unknown as Schema<Config>
 
 const WHY: Record<Mismatch['ecosystem'], string> = {
   js: 'Mixing package managers creates a second lockfile, ignores the existing one, and can install different versions.',
@@ -56,9 +59,9 @@ export function denialText(m: Mismatch, evidence: string): string {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  const shellTools = new Set(config.shellTools)
   ctx.on('tools/pre-execute', async (exec: ToolExecution, next: () => Promise<PreToolDecision>) => {
-    if (!shellTools.has(exec.name)) return next()
+    const cfg = resolveConfig(config)
+    if (!cfg.shellTools.includes(exec.name)) return next()
     const args = exec.arguments as { command?: unknown; workdir?: unknown } | null
     if (typeof args?.command !== 'string') return next()
     const workspace = exec.agent?.session.header.cwd ?? process.cwd()
@@ -67,14 +70,14 @@ export function apply(ctx: Context, config: Config): void {
       const dir = simple.cd.reduce((d, c) => resolve(d, c.replaceAll('\\', '/')), base)
       const root = searchRoot(dir, workspace)
       const managers: ProjectManagers = {
-        ...(config.javascript ? { js: detectJs(dir, root) } : {}),
-        ...(config.python ? { py: detectPy(dir, root) } : {}),
+        ...(cfg.javascript ? { js: detectJs(dir, root) } : {}),
+        ...(cfg.python ? { py: detectPy(dir, root) } : {}),
       }
       const mismatch = checkArgv(simple.argv, managers, simple.text)
       if (mismatch === undefined) continue
       const evidence = (mismatch.ecosystem === 'js' ? managers.js : managers.py)!.evidence.replace(`${workspace}/`, '').replace(workspace, '.')
       const text = denialText(mismatch, evidence)
-      if (config.mode === 'ask') {
+      if (cfg.mode === 'ask') {
         return { kind: 'ask', reason: text, displayReason: { en: `This project uses ${mismatch.expected}; suggested: ${mismatch.suggestion}` } }
       }
       return { kind: 'deny', reason: text }

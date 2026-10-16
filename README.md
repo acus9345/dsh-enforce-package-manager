@@ -65,7 +65,9 @@ It only cares about commands that change the project's dependencies. `npm run bu
 
 ## Settings
 
-Add a row like this to `~/.dsh/profiles/<profile>/cordis.patch.yml`, or to `~/.dsh/cordis.patch.yml` for every profile. Keys you leave out keep their defaults.
+The easy way: open **Plugins** in DSH's sidebar, click **dsh-enforce-package-manager**, change what you want and press **Save**. It applies to the next tool call, no restart needed.
+
+Or add a row like this to `~/.dsh/profiles/<profile>/cordis.patch.yml`, or to `~/.dsh/cordis.patch.yml` for every profile. Keys you leave out keep their defaults.
 
 ```yaml
 - id: enforce-package-manager
