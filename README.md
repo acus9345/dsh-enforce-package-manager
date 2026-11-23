@@ -33,7 +33,7 @@ git clone https://github.com/acus9345/dsh-enforce-package-manager
 cd dsh-enforce-package-manager
 npm install
 npm pack
-dsh plugin --profile web add ./dsh-enforce-package-manager-0.2.0.tgz
+dsh plugin --profile web add ./dsh-enforce-package-manager-0.2.3.tgz
 ```
 
 ## How it detects the project's manager

@@ -27,6 +27,14 @@ const JS_LOCKS: Array<[string, JsManager]> = [
   ['npm-shrinkwrap.json', 'npm'],
 ]
 
+const PY_LOCKS: Array<[string, PyManager]> = [
+  ['uv.lock', 'uv'],
+  ['poetry.lock', 'poetry'],
+  ['pdm.lock', 'pdm'],
+  ['Pipfile', 'pipenv'],
+  ['Pipfile.lock', 'pipenv'],
+]
+
 const readText = (path: string): string | undefined => {
   try {
     return readFileSync(path, 'utf8')
@@ -67,16 +75,21 @@ export function detectJs(dir: string, stopAt: string): ProjectManagers['js'] {
  */
 export function detectPy(dir: string, stopAt: string): ProjectManagers['py'] {
   for (const d of ancestors(dir, stopAt)) {
-    if (existsSync(join(d, 'uv.lock'))) return { manager: 'uv', evidence: `uv.lock in ${d}`, dir: d }
-    if (existsSync(join(d, 'poetry.lock'))) return { manager: 'poetry', evidence: `poetry.lock in ${d}`, dir: d }
-    if (existsSync(join(d, 'pdm.lock'))) return { manager: 'pdm', evidence: `pdm.lock in ${d}`, dir: d }
-    if (existsSync(join(d, 'Pipfile')) || existsSync(join(d, 'Pipfile.lock'))) return { manager: 'pipenv', evidence: `Pipfile in ${d}`, dir: d }
+    const locks = PY_LOCKS.filter(([file]) => existsSync(join(d, file)))
+    const managers = new Set(locks.map(([, m]) => m))
+    if (managers.size === 1) return { manager: locks[0]![1], evidence: `${locks[0]![0]} in ${d}`, dir: d }
+    // Several different lockfiles: ambiguous, do not guess.
+    if (managers.size > 1) return undefined
     const pyproject = readText(join(d, 'pyproject.toml'))
     if (pyproject !== undefined) {
-      if (/^\[tool\.poetry\]/m.test(pyproject)) return { manager: 'poetry', evidence: `[tool.poetry] in ${join(d, 'pyproject.toml')}`, dir: d }
-      if (/^\[tool\.uv\]/m.test(pyproject)) return { manager: 'uv', evidence: `[tool.uv] in ${join(d, 'pyproject.toml')}`, dir: d }
-      if (/^\[tool\.pdm\]/m.test(pyproject)) return { manager: 'pdm', evidence: `[tool.pdm] in ${join(d, 'pyproject.toml')}`, dir: d }
-      return undefined
+      const pyTools: Array<[RegExp, PyManager, string]> = [
+        [/^\s*\[tool\.poetry(?:\]|\.)/m, 'poetry', '[tool.poetry]'],
+        [/^\s*\[tool\.uv(?:\]|\.)/m, 'uv', '[tool.uv]'],
+        [/^\s*\[tool\.pdm(?:\]|\.)/m, 'pdm', '[tool.pdm]'],
+      ]
+      const matched = pyTools.filter(([re]) => re.test(pyproject))
+      if (matched.length === 1) return { manager: matched[0]![1], evidence: `${matched[0]![2]} in ${join(d, 'pyproject.toml')}`, dir: d }
+      if (matched.length > 1) return undefined
     }
   }
   return undefined
@@ -147,7 +160,7 @@ const JS_VALUE_FLAGS: Record<JsManager, Record<string, 'dir' | 'workspace' | 'sk
   npm: { '--prefix': 'dir', '-C': 'dir', '-w': 'workspace', '--workspace': 'workspace', '--registry': 'skip', '--cache': 'skip', '--tag': 'skip', '--userconfig': 'skip', '--omit': 'skip', '--include': 'skip' },
   pnpm: { '-C': 'dir', '--dir': 'dir', '--filter': 'workspace', '-F': 'workspace', '--registry': 'skip', '--store-dir': 'skip' },
   yarn: { '--cwd': 'dir', '--registry': 'skip', '--mode': 'skip' },
-  bun: { '--cwd': 'dir', '--registry': 'skip', '--backend': 'skip' },
+  bun: { '--cwd': 'dir', '--filter': 'workspace', '-F': 'workspace', '--registry': 'skip', '--backend': 'skip' },
 }
 
 const JS_ACTIONS: Record<JsManager, Record<string, JsIntent['action']>> = {
@@ -167,6 +180,11 @@ function parseJs(manager: JsManager, argv: string[]): JsIntent | undefined {
     at += 1
     if (JS_VALUE_FLAGS[manager][a] !== undefined && at < argv.length) leading.push(argv[at++]!)
   }
+  let leadingWorkspace: string | undefined
+  if (manager === 'yarn' && argv[at] === 'workspace' && argv[at + 1] !== undefined) {
+    leadingWorkspace = argv[at + 1]
+    at += 2
+  }
   const args = [...argv.slice(at, at + 1), ...leading, ...argv.slice(at + 1)]
   const sub = args[0]
   const yarnInstall = manager === 'yarn' && sub !== undefined && args.every(x => ['--frozen-lockfile', '--immutable', '--pure-lockfile', '--prefer-offline', '--check-files'].includes(x))
@@ -177,7 +195,7 @@ function parseJs(manager: JsManager, argv: string[]): JsIntent | undefined {
   const flag = (...names: string[]): boolean => rest.some(a => names.includes(a))
   const packages: string[] = []
   let dir: string | undefined
-  let workspace: string | undefined
+  let workspace: string | undefined = leadingWorkspace
   const valueFlags = JS_VALUE_FLAGS[manager]
   for (let k = 0; k < rest.length; k += 1) {
     const a = rest[k]!
@@ -191,7 +209,7 @@ function parseJs(manager: JsManager, argv: string[]): JsIntent | undefined {
     }
     if (!a.startsWith('-')) packages.push(a)
   }
-  const global = flag('-g', '--global', 'global')
+  const global = flag('-g', '--global')
   const intent: JsIntent = {
     action: action === 'add' && packages.length === 0 ? 'install-all' : action,
     packages,
@@ -233,15 +251,34 @@ interface PyIntent {
   upgrade: boolean
 }
 
+const PIP_GLOBAL_VALUE_FLAGS = new Set(['--proxy', '--cert', '--client-cert', '--cache-dir', '--timeout', '--retries', '--log', '--exists-action', '--keyring-provider'])
+
 function parsePip(args: string[]): PyIntent | undefined {
-  const sub = args[0]
-  const rest = args.slice(1)
-  if (sub === 'uninstall') return { action: 'remove', packages: rest.filter(a => !a.startsWith('-')), upgrade: false }
+  let at = 0
+  while (at < args.length && args[at]!.startsWith('-')) {
+    const a = args[at]!
+    if (a === '--python' || a.startsWith('--python=')) return undefined
+    at += 1
+    if (PIP_GLOBAL_VALUE_FLAGS.has(a) && at < args.length) at += 1
+  }
+  const sub = args[at]
+  const rest = args.slice(at + 1)
+  if (rest.some(a => a === '--python' || a.startsWith('--python='))) return undefined
+  if (sub === 'uninstall') {
+    if (rest.some(a => a === '-r' || a === '--requirement' || a.startsWith('--requirement=') || (a.startsWith('-r') && a.length > 2))) return undefined
+    const packages = rest.filter(a => !a.startsWith('-'))
+    if (packages.length === 0) return undefined
+    return { action: 'remove', packages, upgrade: false }
+  }
   if (sub !== 'install') return undefined
   // Installing into the user site, or upgrading the installers themselves, is not a project dependency.
   if (rest.includes('--user')) return undefined
-  const r = rest.findIndex(a => a === '-r' || a === '--requirement')
-  if (r !== -1) return { action: 'requirements', packages: [], requirements: rest[r + 1] ?? 'requirements.txt', upgrade: false }
+  for (let k = 0; k < rest.length; k += 1) {
+    const a = rest[k]!
+    if (a === '-r' || a === '--requirement') return { action: 'requirements', packages: [], requirements: rest[k + 1] ?? 'requirements.txt', upgrade: false }
+    if (a.startsWith('--requirement=')) return { action: 'requirements', packages: [], requirements: a.slice('--requirement='.length) || 'requirements.txt', upgrade: false }
+    if (a.startsWith('-r') && a.length > 2) return { action: 'requirements', packages: [], requirements: a.slice(2), upgrade: false }
+  }
   if (rest.includes('-e') || rest.includes('--editable')) return { action: 'editable', packages: [], upgrade: false }
   const valueFlags = new Set(['-i', '--index-url', '--extra-index-url', '-c', '--constraint', '-t', '--target', '--python-version', '--platform', '-f', '--find-links'])
   const packages: string[] = []
@@ -257,7 +294,7 @@ function parsePip(args: string[]): PyIntent | undefined {
 }
 
 function renderPy(target: PyManager, i: PyIntent): string {
-  const pkgs = i.packages.map(p => (/[<>=!~ ]/.test(p) ? `'${p}'` : p)).join(' ')
+  const pkgs = i.packages.map(p => (!/[<>=!~ ;]/.test(p) ? p : p.includes("'") ? `"${p}"` : `'${p}'`)).join(' ')
   switch (i.action) {
     case 'add': return { uv: `uv add ${pkgs}`, poetry: `poetry add ${pkgs}`, pipenv: `pipenv install ${pkgs}`, pdm: `pdm add ${pkgs}`, pip: `pip install ${pkgs}` }[target]
     case 'remove': return { uv: `uv remove ${pkgs}`, poetry: `poetry remove ${pkgs}`, pipenv: `pipenv uninstall ${pkgs}`, pdm: `pdm remove ${pkgs}`, pip: `pip uninstall ${pkgs}` }[target]
@@ -288,6 +325,10 @@ export function checkArgv(argv: string[], managers: ProjectManagers, text: strin
     let pipArgs: string[] | undefined
     if (/^pip3?(\.\d+)?$/.test(prog)) pipArgs = argv.slice(1)
     else if (/^python(\d+(\.\d+)?)?$/.test(prog) && argv[1] === '-m' && argv[2] === 'pip') pipArgs = argv.slice(3)
+    else if (prog === 'py') {
+      const mIdx = argv[1] !== undefined && /^-\d+(\.\d+)?(-\d+)?$/.test(argv[1]) ? 2 : 1
+      if (argv[mIdx] === '-m' && argv[mIdx + 1] === 'pip') pipArgs = argv.slice(mIdx + 2)
+    }
     if (pipArgs !== undefined) {
       const intent = parsePip(pipArgs)
       if (intent !== undefined) return { ecosystem: 'py', used: 'pip', expected: managers.py.manager, command: text, suggestion: renderPy(managers.py.manager, intent) }
@@ -296,25 +337,174 @@ export function checkArgv(argv: string[], managers: ProjectManagers, text: strin
   return undefined
 }
 
+function isBashBacktickSubst(command: string, index: number): boolean {
+  const q = command[index + 1]
+  if (q !== "'" && q !== '"') return false
+  let closeQuote = -1
+  for (let j = index + 2; j < command.length; j += 1) {
+    const c = command[j]!
+    if (c === '\n') return false
+    if (q === '"' && c === '\\' && j + 1 < command.length) {
+      j += 1
+      continue
+    }
+    if (c === '`' && command[j + 1] === q) {
+      j += 1
+      continue
+    }
+    if (c === q) {
+      closeQuote = j
+      break
+    }
+  }
+  if (closeQuote === -1) return false
+  for (let j = closeQuote + 1; j < command.length; j += 1) {
+    const c = command[j]!
+    if (c === '\n') return false
+    if (c === '`') return command[j + 1] !== q
+  }
+  return false
+}
+
+function splitCommands(command: string, shell?: string): string[] {
+  const isBash = shell !== undefined && /^(?:bash|sh|zsh|dash|ksh)$/i.test(shell)
+  const isPwsh = shell !== undefined && /^(?:pwsh|powershell)$/i.test(shell)
+  const parts: string[] = []
+  let current = ''
+  let atWordStart = true
+  let quote: "'" | '"' | "$'" | undefined
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i]!
+    const next = command[i + 1]
+    if (quote !== undefined) {
+      const bashEsc = !isPwsh && (
+        (quote === '"' && ch === '\\' && (next === '"' || next === '\\'))
+        || (quote === "$'" && ch === '\\' && (next === "'" || next === '\\'))
+      )
+      const pwshEsc = !isBash && quote === '"' && ch === '`' && (
+        next === '`' || (next === '"' && (isPwsh || !isBashBacktickSubst(command, i)))
+      )
+      if (bashEsc || pwshEsc) {
+        current += ch + next!
+        i += 1
+      } else {
+        current += ch
+        if (ch === (quote === "$'" ? "'" : quote)) quote = undefined
+      }
+      continue
+    }
+    if (!isPwsh && ch === '\\' && (next === '\n' || (next === '\r' && command[i + 2] === '\n'))) {
+      i += next === '\r' ? 2 : 1
+      continue
+    }
+    if (!isPwsh && ch === '\\' && next !== undefined && (next === "'" || next === '"' || next === '\\' || next === '#' || next === ' ' || next === '\t')) {
+      current += ch + next
+      i += 1
+      atWordStart = false
+      continue
+    }
+    if (!isBash && ch === '`' && next !== undefined && (next === '`' || next === '#' || next === ' ' || next === '\t' || ((next === "'" || next === '"') && (isPwsh || !isBashBacktickSubst(command, i))))) {
+      current += ch + next
+      i += 1
+      atWordStart = false
+      continue
+    }
+    if (ch === '#' && atWordStart) {
+      parts.push(current)
+      current = ''
+      atWordStart = true
+      const nl = command.indexOf('\n', i + 1)
+      if (nl === -1) break
+      i = nl
+      continue
+    }
+    if (!isBash && ch === '<' && next === '#' && atWordStart) {
+      const close = command.indexOf('#>', i + 2)
+      if (close !== -1) {
+        current += ' '
+        i = close + 1
+        atWordStart = true
+        continue
+      }
+    }
+    if (ch === '$' && next === "'") {
+      quote = "$'"
+      current += "$'"
+      i += 1
+      atWordStart = false
+      continue
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch
+      current += ch
+      atWordStart = false
+      continue
+    }
+    if (ch === ';' || ch === '\n') {
+      parts.push(current)
+      current = ''
+      atWordStart = true
+    } else if (ch === '&' && next === '&') {
+      parts.push(current)
+      current = ''
+      i += 1
+      atWordStart = true
+    } else if (ch === '|') {
+      parts.push(current)
+      current = ''
+      if (next === '|') i += 1
+      atWordStart = true
+    } else {
+      current += ch
+      atWordStart = /\s/.test(ch)
+    }
+  }
+  if (current.length > 0) parts.push(current)
+  return parts
+}
+
 /**
  * Split a command line into argv lists (quotes respected; `cd dir &&` tracked).
  * @param command - raw shell text.
+ * @param shell - optional shell tool name (e.g. `bash`, `pwsh`).
  * @returns each simple command with the directory it runs in, relative to the start.
  */
-export function simpleCommands(command: string): Array<{ argv: string[]; text: string; cd: string[] }> {
+export function simpleCommands(command: string, shell?: string): Array<{ argv: string[]; text: string; cd: string[] }> {
   const out: Array<{ argv: string[]; text: string; cd: string[] }> = []
-  const cd: string[] = []
-  for (const part of command.split(/&&|\|\||;|\n|\|/)) {
+  let cd: string[] = []
+  const stack: string[][] = []
+  for (const part of splitCommands(command, shell)) {
     const words = (part.match(/'[^']*'|"(?:[^"\\]|\\.)*"|\S+/g) ?? []).map(w => w.replace(/^'(.*)'$/s, '$1').replace(/^"(.*)"$/s, '$1'))
     while (words.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!)) words.shift()
-    if (words[0] === 'sudo' || words[0] === 'command' || words[0] === 'exec' || words[0] === '&') words.shift()
+    while (words[0] === 'sudo' || words[0] === 'command' || words[0] === 'exec' || words[0] === '&') words.shift()
     if (words.length === 0) continue
-    // PowerShell's Set-Location / sl / pushd move the same way `cd` does.
-    if (/^(?:cd|set-location|sl|chdir|pushd)$/i.test(words[0]!) && words[1] !== undefined) {
-      cd.push(words[1])
+    if (/^(?:popd|pop-location)$/i.test(words[0]!)) {
+      const prev = stack.pop()
+      if (prev !== undefined) cd = prev
+      continue
+    }
+    // PowerShell's Set-Location / sl / Push-Location / pushd move the same way `cd` does.
+    if (/^(?:cd|set-location|sl|chdir|pushd|push-location)$/i.test(words[0]!)) {
+      if (/^(?:pushd|push-location)$/i.test(words[0]!)) stack.push([...cd])
+      const target = words[1] === '--' || /^-(?:path|literalpath)$/i.test(words[1] ?? '') ? words[2] : words[1]
+      if (target !== undefined && target !== '-') cd.push(target)
       continue
     }
     out.push({ argv: words, text: part.trim(), cd: [...cd] })
   }
   return out
+}
+
+/**
+ * Shorten paths inside `evidence` relative to `workspace` on both POSIX and Windows.
+ * @param evidence - raw detection evidence string.
+ * @param workspace - the session's workspace directory.
+ * @returns evidence with the workspace prefix stripped or replaced by `.`.
+ */
+export function formatEvidence(evidence: string, workspace: string): string {
+  const trimmed = workspace.replace(/[/\\]+$/, '')
+  if (trimmed === '') return evidence
+  const withPrefix = evidence.replace(`${trimmed}/`, '').replace(`${trimmed}\\`, '')
+  if (withPrefix !== evidence) return withPrefix
+  return evidence.endsWith(trimmed) ? `${evidence.slice(0, -trimmed.length)}.` : evidence
 }

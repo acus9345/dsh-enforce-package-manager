@@ -15,10 +15,10 @@ import { isAbsolute, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
-import { checkArgv, detectJs, detectPy, searchRoot, simpleCommands, type Mismatch, type ProjectManagers } from './detect.ts'
+import { checkArgv, detectJs, detectPy, formatEvidence, searchRoot, simpleCommands, type Mismatch, type ProjectManagers } from './detect.ts'
 import { resolveConfig } from './shared/live.ts'
 
-export { checkArgv, detectJs, detectPy, searchRoot, simpleCommands } from './detect.ts'
+export { checkArgv, detectJs, detectPy, formatEvidence, searchRoot, simpleCommands } from './detect.ts'
 export type { Mismatch, ProjectManagers, JsManager, PyManager } from './detect.ts'
 
 export const name = 'enforce-package-manager'
@@ -66,7 +66,7 @@ export function apply(ctx: Context, config: Config): void {
     if (typeof args?.command !== 'string') return next()
     const workspace = exec.agent?.session.header.cwd ?? process.cwd()
     const base = typeof args.workdir === 'string' ? (isAbsolute(args.workdir) ? args.workdir : resolve(workspace, args.workdir)) : workspace
-    for (const simple of simpleCommands(args.command)) {
+    for (const simple of simpleCommands(args.command, exec.name)) {
       const dir = simple.cd.reduce((d, c) => resolve(d, c.replaceAll('\\', '/')), base)
       const root = searchRoot(dir, workspace)
       const managers: ProjectManagers = {
@@ -75,7 +75,7 @@ export function apply(ctx: Context, config: Config): void {
       }
       const mismatch = checkArgv(simple.argv, managers, simple.text)
       if (mismatch === undefined) continue
-      const evidence = (mismatch.ecosystem === 'js' ? managers.js : managers.py)!.evidence.replace(`${workspace}/`, '').replace(workspace, '.')
+      const evidence = formatEvidence((mismatch.ecosystem === 'js' ? managers.js : managers.py)!.evidence, workspace)
       const text = denialText(mismatch, evidence)
       if (cfg.mode === 'ask') {
         return { kind: 'ask', reason: text, displayReason: { en: `This project uses ${mismatch.expected}; suggested: ${mismatch.suggestion}` } }
